@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>Spotify feel • iTunes data</title>
+  <style>
+    :root{--bg:#000;--sidebar:#121212;--card:#181818;--text:#fff;--sub:#b3b3b3;--accent:#1db954;}
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+    body{background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+    a{color:var(--sub);text-decoration:none;transition:color .2s;}a:hover{color:var(--text);}
+    .wrap{display:flex;flex:1;overflow:hidden;}
+    nav{width:240px;background:var(--sidebar);padding:24px 16px;display:flex;flex-direction:column;gap:16px;flex-shrink:0;}
+    main{flex:1;overflow-y:auto;padding:24px 32px;}
+    footer{height:90px;background:#181818;border-top:1px solid #282828;display:flex;align-items:center;padding:0 16px;flex-shrink:0;}
+    .logo{font-size:24px;font-weight:700;letter-spacing:-1px;margin-bottom:8px;}
+    .nav-links{display:flex;flex-direction:column;gap:8px;}
+    .search-box{position:relative;margin-bottom:20px;}
+    .search-box input{width:100%;padding:8px 12px;border-radius:20px;border:none;background:#282828;color:var(--text);}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:24px;}
+    .card{background:var(--card);border-radius:8px;padding:16px;position:relative;transition:background .3s;cursor:pointer;opacity:0;animation:fadeIn .4s forwards;}
+    @keyframes fadeIn{to{opacity:1;}}
+    .card:hover{background:#282828;}
+    .card img{width:100%;border-radius:4px;aspect-ratio:1;object-fit:cover;}
+    .card h4{margin-top:12px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .card p{font-size:12px;color:var(--sub);}
+    .play{position:absolute;bottom:16px;right:16px;width:48px;height:48px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;opacity:0;transform:scale(.9);transition:all .2s;box-shadow:0 8px 16px rgba(0,0,0,.6);}
+    .card:hover .play{opacity:1;transform:scale(1);}
+    .player{display:flex;align-items:center;width:100%;gap:24px;}
+    .track{flex:1;display:flex;align-items:center;gap:12px;min-width:180px;}
+    .track img{width:56px;border-radius:4px;}
+    .info{flex:1;}.info h5{font-size:14px;}.info span{font-size:11px;color:var(--sub);}
+    .bar{flex:2;height:4px;background:#535353;border-radius:2px;overflow:hidden;cursor:pointer;position:relative;}
+    .progress{height:100%;background:var(--text);width:0;transition:width .05s linear;}
+    .ctrl{font-size:20px;color:var(--sub);cursor:pointer;user-select:none;}
+    .volume{display:flex;align-items:center;gap:8px;margin-left:16px;}
+    .volume input{width:100px;}
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+  <nav>
+    <div class="logo">Spot<span style="color:var(--accent)">i</span>Tunes</div>
+    <div class="nav-links"><a href="#">Home</a><a href="#">Search</a><a href="#">Library</a></div>
+  </nav>
+
+  <main>
+    <div class="search-box"><input id="search" placeholder="Search albums or songs…" autocomplete="off"></div>
+    <h2 id="section-title">Hot Tracks</h2>
+    <div class="grid" id="grid">Loading…</div>
+  </main>
+</div>
+
+<footer>
+  <div class="player">
+    <div class="track">
+      <img id="footImg" src="" alt="">
+      <div class="info">
+        <h5 id="footTitle">Pick something</h5>
+        <span id="footArt">—</span>
+      </div>
+    </div>
+    <div class="ctrl" id="prev">⏮</div>
+    <div class="ctrl" id="play">▶</div>
+    <div class="ctrl" id="next">⏭</div>
+    <div class="bar" id="bar"><div class="progress" id="progress"></div></div>
+    <div class="volume"><span style="font-size:14px;color:var(--sub)">🔊</span><input id="volume" type="range" min="0" max="1" step="0.01"></div>
+  </div>
+</footer>
+
+<audio id="audio"></audio>
+
+<script>
+const grid      = document.getElementById('grid');
+const search    = document.getElementById('search');
+const audio     = document.getElementById('audio');
+const footImg   = document.getElementById('footImg');
+const footTitle = document.getElementById('footTitle');
+const footArt   = document.getElementById('footArt');
+const playBtn   = document.getElementById('play');
+const progress  = document.getElementById('progress');
+const bar       = document.getElementById('bar');
+const vol       = document.getElementById('volume');
+
+let queue   = [];
+let qIndex  = -1;
+let offset  = 0;
+let loading = false;
+let term    = 'hot tracks';
+
+/* ----------  VOLUME  ---------- */
+vol.value = localStorage.getItem('vol') || 0.5;
+audio.volume = vol.value;
+vol.oninput = e => {
+  audio.volume = e.target.value;
+  localStorage.setItem('vol', e.target.value);
+};
+
+/* ----------  SEARCH  ---------- */
+search.addEventListener('input', debounce(async () => {
+  offset = 0; term = search.value.trim() || 'hot tracks';
+  queue = []; grid.innerHTML = 'Loading…';
+  await loadMore();
+}, 300));
+
+/* ----------  INFINITE SCROLL  ---------- */
+document.querySelector('main').addEventListener('scroll', async () => {
+  const main = document.querySelector('main');
+  if (main.scrollTop + main.clientHeight >= main.scrollHeight - 100 && !loading) await loadMore();
+});
+
+/* ----------  FETCH  ---------- */
+async function loadMore() {
+  if (loading) return; loading = true;
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(term)}&media=music&entity=song&limit=30&offset=${offset}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  offset += 30;
+  queue = [...queue, ...data.results];
+  render(data.results);
+  loading = false;
+}
+loadMore();
+
+/* ----------  RENDER  ---------- */
+function render(items) {
+  if (offset === 30) grid.innerHTML = '';
+  items.forEach((track, idx) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <img src="${track.artworkUrl100.replace('100x100', '600x600')}" alt="">
+      <h4>${track.trackName}</h4>
+      <p>${track.artistName}</p>
+      <div class="play">▶</div>`;
+    card.querySelector('.play').onclick = e => {
+      e.stopPropagation();
+      playPreview(queue.indexOf(track));
+    };
+    grid.appendChild(card);
+  });
+}
+
+/* ----------  PLAYBACK  ---------- */
+function playPreview(idx) {
+  const track = queue[idx];
+  if (!track.previewUrl) { alert('No preview available'); return; }
+  qIndex = idx;
+  audio.src = track.previewUrl;
+  audio.play();
+  footImg.src = track.artworkUrl100.replace('100x100', '56x56');
+  footTitle.textContent = track.trackName;
+  footArt.textContent = track.artistName;
+  playBtn.textContent = '❚❚';
+}
+playBtn.onclick = () => {
+  if (audio.paused) { audio.play(); playBtn.textContent = '❚❚'; }
+  else { audio.pause(); playBtn.textContent = '▶'; }
+};
+audio.onended = () => playBtn.textContent = '▶';
+
+/* ----------  PROGRESS  ---------- */
+audio.ontimeupdate = () => {
+  progress.style.width = (audio.currentTime / audio.duration * 100 || 0) + '%';
+};
+bar.onclick = e => {
+  const pct = e.offsetX / bar.offsetWidth;
+  audio.currentTime = pct * audio.duration;
+};
+
+/* ----------  KEYBOARD  ---------- */
+window.onkeydown = e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); playBtn.click(); }
+  if (e.code === 'ArrowLeft') audio.currentTime = Math.max(0, audio.currentTime - 10);
+  if (e.code === 'ArrowRight') audio.currentTime = Math.min(audio.duration, audio.currentTime + 10);
+};
+
+/* ----------  DEBOUNCE  ---------- */
+function debounce(fn, ms) {
+  let t; return function () { clearTimeout(t); t = setTimeout(() => fn.apply(this, arguments), ms); };
+}
+</script>
+
+</body>
+</html>
